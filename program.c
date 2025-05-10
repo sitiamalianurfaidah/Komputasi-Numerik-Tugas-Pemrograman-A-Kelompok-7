@@ -4,225 +4,112 @@
 #include <math.h>
 
 #define MAX_ROWS 1000
-#define MAX_COLS 3
 
-// Struktur data
+// Struktur buat nyimpen data
 typedef struct {
     int year[MAX_ROWS];
-    double percent[MAX_ROWS];
-    double population[MAX_ROWS];
-    int n; // jumlah data
-    int missingYear[MAX_ROWS];
+    double percent[MAX_ROWS];     
+    double population[MAX_ROWS];  
+    int n;                       
+    int missingYear[10];          
     int missingCount;
 } DataTable;
 
-// Membaca file CSV
+// Baca file CSV
 void read_csv(const char* filename, DataTable* table) {
     FILE* file = fopen(filename, "r");
     if (!file) {
-        printf("Error: Tidak dapat membuka file %s\n", filename);
+        printf("Gagal buka file %s. Pastikan file-nya ada ya!\n", filename);
         exit(1);
     }
 
-    char line[100];
+    char line[200];
     int row = 0;
+    fgets(line, sizeof(line), file); // skip header
 
     while (fgets(line, sizeof(line), file)) {
-        if (row == 0 && strstr(line, "Year")) { // skip header
-            row++;
-            continue;
-        }
-        if (sscanf(line, "%d,%lf,%lf", &table->year[row], &table->percent[row], &table->population[row]) == 3) {
-            row++;
-        } else { // data hilang
-            table->year[row] = -9999;
-            table->percent[row] = -9999;
-            table->population[row] = -9999;
+        int year;
+        double percent, population;
+        if (sscanf(line, "%d,%lf,%lf", &year, &percent, &population) == 3) {
+            table->year[row] = year;
+            table->percent[row] = percent;
+            table->population[row] = population;
             row++;
         }
     }
+
     table->n = row;
     fclose(file);
 }
 
-// Menampilkan data
-void print_data(const DataTable* table) {
-    printf("\n[Data CSV]\n");
-    printf("Year\tPercent\t\tPopulation\n");
-    for (int i = 0; i < table->n; i++) {
-        printf("%d\t%.4f\t%.4f\n", table->year[i], table->percent[i], table->population[i]);
-    }
-}
-
-// Cari tahun yang hilang
-void find_missing_years(DataTable* table) {
-    int minYear = table->year[1];
-    int maxYear = table->year[table->n - 1];
+// Cari tahun-tahun yang datanya hilang
+void find_missing_years(DataTable* table, const int* knownMissing, int knownCount) {
     table->missingCount = 0;
-
-    for (int y = minYear; y <= maxYear; y++) {
+    for (int i = 0; i < knownCount; i++) {
         int found = 0;
-        for (int i = 0; i < table->n; i++) {
-            if (table->year[i] == y) {
+        for (int j = 0; j < table->n; j++) {
+            if (table->year[j] == knownMissing[i]) {
                 found = 1;
                 break;
             }
         }
         if (!found) {
-            table->missingYear[table->missingCount++] = y;
+            table->missingYear[table->missingCount++] = knownMissing[i];
         }
     }
 }
 
-// Fungsi Lagrange Interpolasi
-double lagrange_interpolate(int n, double x[], double y[], double X) {
-    double sum = 0;
-    for (int i = 0; i < n; i++) {
-        double term = y[i];
-        for (int j = 0; j < n; j++) {
-            if (j != i)
-                term *= (X - x[j]) / (x[i] - x[j]);
+// Regresi polinomial
+void polynomial_regression(const double* x, const double* y, int n, int degree, double* coeffs) {
+    double X[20][20] = {0};
+    double Y[20] = {0};
+
+    for (int i = 0; i <= degree; i++) {
+        for (int j = 0; j <= degree; j++) {
+            for (int k = 0; k < n; k++)
+                X[i][j] += pow(x[k], i + j);
         }
-        sum += term;
-    }
-    return sum;
-}
-
-// Fungsi Regresi Polinomial Least Squares (derajat m)
-void polynomial_regression(int m, int N, double x[], double y[], double coeff[]) {
-    double X[2 * m + 1];
-    for (int i = 0; i < 2 * m + 1; i++) {
-        X[i] = 0;
-        for (int j = 0; j < N; j++)
-            X[i] += pow(x[j], i);
+        for (int k = 0; k < n; k++)
+            Y[i] += y[k] * pow(x[k], i);
     }
 
-    double B[m + 1][m + 2];
-    for (int i = 0; i <= m; i++)
-        for (int j = 0; j <= m; j++)
-            B[i][j] = X[i + j];
-
-    double Y[m + 1];
-    for (int i = 0; i <= m; i++) {
-        Y[i] = 0;
-        for (int j = 0; j < N; j++)
-            Y[i] += pow(x[j], i) * y[j];
-    }
-
-    for (int i = 0; i <= m; i++)
-        B[i][m + 1] = Y[i];
-
-    // Gaussian Elimination
-    for (int i = 0; i < m; i++) {
-        for (int k = i + 1; k <= m; k++) {
-            if (fabs(B[i][i]) < fabs(B[k][i])) {
-                for (int j = 0; j <= m + 1; j++) {
-                    double temp = B[i][j];
-                    B[i][j] = B[k][j];
-                    B[k][j] = temp;
-                }
-            }
+    for (int i = 0; i <= degree; i++) {
+        for (int j = i + 1; j <= degree; j++) {
+            double ratio = X[j][i] / X[i][i];
+            for (int k = 0; k <= degree; k++)
+                X[j][k] -= ratio * X[i][k];
+            Y[j] -= ratio * Y[i];
         }
     }
 
-    for (int i = 0; i < m; i++) {
-        for (int k = i + 1; k <= m; k++) {
-            double t = B[k][i] / B[i][i];
-            for (int j = 0; j <= m + 1; j++)
-                B[k][j] -= t * B[i][j];
-        }
-    }
-
-    // Back substitution
-    for (int i = m; i >= 0; i--) {
-        coeff[i] = B[i][m + 1];
-        for (int j = 0; j <= m; j++) {
-            if (j != i)
-                coeff[i] -= B[i][j] * coeff[j];
-        }
-        coeff[i] /= B[i][i];
+    for (int i = degree; i >= 0; i--) {
+        coeffs[i] = Y[i];
+        for (int j = i + 1; j <= degree; j++)
+            coeffs[i] -= X[i][j] * coeffs[j];
+        coeffs[i] /= X[i][i];
     }
 }
 
-// Fungsi analisis data: interpolasi + regresi
-void analyze_data(DataTable* table) {
-    printf("\n[ANALISIS DATA]\n");
-
-    // Estimasi data hilang
-    if (table->missingCount == 0) {
-        printf("Tidak ada tahun yang hilang terdeteksi.\n");
-    } else {
-        printf("\n[Estimasi nilai hilang dengan Lagrange]\n");
-        for (int idx = 0; idx < table->missingCount; idx++) {
-            int missingYear = table->missingYear[idx];
-            double x_pts[4], y_pts[4];
-            int count = 0;
-            for (int i = 0; i < table->n && count < 4; i++) {
-                if (table->year[i] != -9999 && table->population[i] != -9999 && abs(table->year[i] - missingYear) <= 5) {
-                    x_pts[count] = table->year[i];
-                    y_pts[count] = table->population[i];
-                    count++;
-                }
-            }
-            if (count == 4) {
-                double estPop = lagrange_interpolate(4, x_pts, y_pts, missingYear);
-                printf("Populasi estimasi tahun %d: %.4f\n", missingYear, estPop);
-            } else {
-                printf("Tidak cukup data untuk estimasi populasi tahun %d\n", missingYear);
-            }
-
-            double y_percent[4];
-            count = 0;
-            for (int i = 0; i < table->n && count < 4; i++) {
-                if (table->year[i] != -9999 && table->percent[i] != -9999 && abs(table->year[i] - missingYear) <= 5) {
-                    x_pts[count] = table->year[i];
-                    y_percent[count] = table->percent[i];
-                    count++;
-                }
-            }
-            if (count == 4) {
-                double estPercent = lagrange_interpolate(4, x_pts, y_percent, missingYear);
-                printf("Percent estimasi tahun %d: %.4f\n", missingYear, estPercent);
-            } else {
-                printf("Tidak cukup data untuk estimasi percent tahun %d\n", missingYear);
-            }
-        }
+double evaluate_polynomial(double* coeffs, int degree, double x) {
+    double result = 0;
+    for (int i = 0; i <= degree; i++) {
+        result += coeffs[i] * pow(x, i);
     }
+    return result;
+}
 
-    // Regresi polinomial populasi
-    printf("\n[Regresi polinomial populasi derajat 2]\n");
-    double x_data[MAX_ROWS], y_data[MAX_ROWS];
-    int N = 0;
-    for (int i = 0; i < table->n; i++) {
-        if (table->population[i] != -9999) {
-            x_data[N] = table->year[i];
-            y_data[N] = table->population[i];
-            N++;
-        }
+double clamp(double val, double min, double max) {
+    if (val < min) return min;
+    if (val > max) return max;
+    return val;
+}
+
+void print_polynomial(double* coeffs, int degree) {
+    printf("y = ");
+    for (int i = degree; i >= 0; i--) {
+        printf("%+.4lfx^%d ", coeffs[i], i);
     }
-    double coeff[3];
-    polynomial_regression(2, N, x_data, y_data, coeff);
-    printf("Persamaan populasi: y = (%.4f) + (%.4f)x + (%.4f)x^2\n", coeff[0], coeff[1], coeff[2]);
-
-    double predPop = coeff[0] + coeff[1] * 2030 + coeff[2] * pow(2030, 2);
-    printf("Estimasi populasi tahun 2030: %.4f\n", predPop);
-
-    // Regresi polinomial percent
-    printf("\n[Regresi polinomial percent derajat 3]\n");
-    N = 0;
-    for (int i = 0; i < table->n; i++) {
-        if (table->percent[i] != -9999) {
-            x_data[N] = table->year[i];
-            y_data[N] = table->percent[i];
-            N++;
-        }
-    }
-    double coeff2[4];
-    polynomial_regression(3, N, x_data, y_data, coeff2);
-    printf("Persamaan percent: y = (%.4f) + (%.4f)x + (%.4f)x^2 + (%.4f)x^3\n", coeff2[0], coeff2[1], coeff2[2], coeff2[3]);
-
-    double predPercent = coeff2[0] + coeff2[1] * 2035 + coeff2[2] * pow(2035, 2) + coeff2[3] * pow(2035, 3);
-    printf("Estimasi percent tahun 2035: %.4f\n", predPercent);
+    printf("\n");
 }
 
 int main() {
@@ -230,16 +117,45 @@ int main() {
     const char* filename = "Data_Tugas_Pemrograman_A.csv";
 
     read_csv(filename, &table);
-    print_data(&table);
 
-    find_missing_years(&table);
+    int knownMissing[] = {2005, 2006, 2015, 2016};
+    find_missing_years(&table, knownMissing, 4);
 
-    printf("\nTahun yang hilang:\n");
-    for (int i = 0; i < table.missingCount; i++) {
-        printf("%d\n", table.missingYear[i]);
+    double x[MAX_ROWS], y_percent[MAX_ROWS], y_pop[MAX_ROWS];
+    int count = 0;
+    for (int i = 0; i < table.n; i++) {
+        x[count] = table.year[i];
+        y_percent[count] = table.percent[i] / 100.0; // Normalisasi ke 0–1
+        y_pop[count] = table.population[i];
+        count++;
     }
 
-    analyze_data(&table);
+    double coeff_percent[10], coeff_pop[10];
+
+    polynomial_regression(x, y_percent, count, 3, coeff_percent);
+    polynomial_regression(x, y_pop, count, 2, coeff_pop);
+
+    printf("\n[ANALISIS DATA]\n");
+    if (table.missingCount == 0) {
+        printf("Tidak ada tahun yang hilang terdeteksi.\n");
+    } else {
+        for (int i = 0; i < table.missingCount; i++) {
+            int year = table.missingYear[i];
+            double estPercent = clamp(evaluate_polynomial(coeff_percent, 3, year), 0, 1) * 100.0;
+            double estPop = evaluate_polynomial(coeff_pop, 2, year);
+            printf("Estimasi percent tahun %d: %.4f\n", year, estPercent);
+            printf("Estimasi populasi tahun %d: %.4f\n", year, estPop);
+        }
+    }
+
+    printf("\n[Regresi polinomial percent derajat 3]\n");
+    print_polynomial(coeff_percent, 3);
+    double est2035 = clamp(evaluate_polynomial(coeff_percent, 3, 2035), 0, 1) * 100.0;
+    printf("Estimasi percent tahun 2035: %.4f\n", est2035);
+
+    printf("\n[Regresi polinomial populasi derajat 2]\n");
+    print_polynomial(coeff_pop, 2);
+    printf("Estimasi populasi tahun 2030: %.4f\n", evaluate_polynomial(coeff_pop, 2, 2030));
 
     return 0;
 }
